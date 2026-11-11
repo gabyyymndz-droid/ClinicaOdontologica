@@ -1,0 +1,58 @@
+rules_version = '2';
+
+// Reglas de seguridad de SmileCare Manager.
+// Son la barrera real: aunque alguien modifique el JS del navegador,
+// la Secretaria no podrá editar ni borrar fichas clínicas ni consultas.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function userRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.rol;
+    }
+    function isDoctor() { return signedIn() && userRole() == 'doctor'; }
+    function isStaff()  { return signedIn() && userRole() in ['doctor', 'secretaria']; }
+
+    function validPatient(d) {
+      return d.nombre is string && d.nombre.size() >= 3
+        && d.dui is string && d.dui.matches('^[0-9]{8}-[0-9]$')
+        && d.telefono is string && d.telefono.size() >= 8;
+    }
+
+    // Perfiles: se crean desde la consola de Firebase (o con el Admin SDK).
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isDoctor());
+      allow write: if false;
+    }
+
+    match /patients/{patientId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && validPatient(request.resource.data);
+      allow update: if isDoctor() && validPatient(request.resource.data);
+      allow delete: if isDoctor();
+
+      // Historial clínico: lectura para el personal, escritura solo del Doctor.
+      match /consultations/{consultationId} {
+        allow read: if isStaff();
+        allow create: if isDoctor()
+          && request.resource.data.tratamiento is string
+          && request.resource.data.costo is number
+          && request.resource.data.costo >= 0
+          && request.resource.data.doctorId == request.auth.uid;
+        allow update, delete: if isDoctor();
+      }
+    }
+
+    match /appointments/{appointmentId} {
+      allow read: if isStaff();
+      allow create: if isStaff()
+        && request.resource.data.estado == 'programada'
+        && request.resource.data.pacienteId is string;
+      // La Secretaria solo puede cambiar el estado y marcar el recordatorio.
+      allow update: if isDoctor() || (isStaff()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['estado', 'recordatorioEnviado', 'recordatorioFecha', 'actualizadoEn']));
+      allow delete: if isDoctor();
+    }
+  }
+}
