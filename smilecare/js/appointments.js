@@ -80,6 +80,10 @@ export function toDateTime(appt) {
   return d;
 }
 
+function localISODate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 /** Cálculo del tiempo restante para la cita y si conviene enviar recordatorio (≤ 48 h). */
 export function getReminderInfo(appt, now = new Date()) {
   const when = toDateTime(appt);
@@ -132,7 +136,14 @@ const toDate = (v) => (v?.toDate ? v.toDate() : v instanceof Date ? v : null);
 
 function mapAppointment(snap) {
   const d = snap.data();
-  return { id: snap.id, ...d, creadoEn: toDate(d.creadoEn), recordatorioFecha: toDate(d.recordatorioFecha) };
+  const fecha = toDate(d.fecha);
+  return {
+    id: snap.id,
+    ...d,
+    fecha: fecha ? localISODate(fecha) : d.fecha,
+    creadoEn: toDate(d.creadoEn),
+    recordatorioFecha: toDate(d.recordatorioFecha),
+  };
 }
 
 export async function getAppointments() {
@@ -141,9 +152,18 @@ export async function getAppointments() {
 }
 
 async function assertSlotAvailable(fecha, hora) {
-  const snap = await getDocs(query(appointmentsRef, where("fecha", "==", fecha)));
+  const start = parseISODate(fecha);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  const [timestampSnap, legacySnap] = await Promise.all([
+    getDocs(query(appointmentsRef, where("fecha", ">=", start), where("fecha", "<", end))),
+    getDocs(query(appointmentsRef, where("fecha", "==", fecha))),
+  ]);
+  const documents = new Map(
+    [...timestampSnap.docs, ...legacySnap.docs].map((snapshot) => [snapshot.id, snapshot]),
+  );
   const target = toMinutes(hora);
-  const conflict = snap.docs
+  const conflict = [...documents.values()]
     .map((d) => d.data())
     .find((a) => a.estado !== ESTADOS.CANCELADA && Math.abs(toMinutes(a.hora) - target) < MIN_GAP_MINUTES);
 
@@ -175,13 +195,19 @@ export async function createAppointment(raw, patient) {
   const payload = {
     ...data,
     pacienteId: patient.id,
+    nombre: patient.nombre,
     pacienteNombre: patient.nombre,
-    telefono: patient.telefono,
+    telefono: normalizePhone(patient.telefono),
     estado: ESTADOS.PROGRAMADA,
     recordatorioEnviado: false,
     creadoPor: user.uid,
   };
-  const ref = await addDoc(appointmentsRef, { ...payload, creadoEn: serverTimestamp(), actualizadoEn: serverTimestamp() });
+  const ref = await addDoc(appointmentsRef, {
+    ...payload,
+    fecha: toDateTime(data),
+    creadoEn: serverTimestamp(),
+    actualizadoEn: serverTimestamp(),
+  });
   return { id: ref.id, ...payload, creadoEn: new Date(), recordatorioFecha: null };
 }
 

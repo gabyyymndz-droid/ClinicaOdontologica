@@ -4,24 +4,27 @@
  * Reemplaza los valores de firebaseConfig con los de tu proyecto:
  * Consola de Firebase → Configuración del proyecto → Tus apps → SDK config.
  */
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
 
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "TU_API_KEY",
-  authDomain: "tu-proyecto.firebaseapp.com",
-  projectId: "tu-proyecto",
-  storageBucket: "tu-proyecto.appspot.com",
-  messagingSenderId: "000000000000",
-  appId: "1:000000000000:web:xxxxxxxxxxxxxxxx",
+  apiKey: "AIzaSyCHL8E4FV9Fn0AJCpOi3VRX1KGiGybHm2Q",
+  authDomain: "smilecare-24006.firebaseapp.com",
+  projectId: "smilecare-24006",
+  storageBucket: "smilecare-24006.firebasestorage.app",
+  messagingSenderId: "919717139935",
+  appId: "1:919717139935:web:e2008b70ecafde2175606a",
+  measurementId: "G-J9HHQBG4ZJ"
 };
 
-export const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-
-auth.languageCode = "es";
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
 
 /** Datos de la clínica usados en mensajes y recordatorios. */
 export const CLINIC_CONFIG = {
