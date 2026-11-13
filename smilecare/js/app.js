@@ -360,7 +360,6 @@ function renderDashboard() {
   applyPermissions($("[data-view=dashboard]"));
 }
 
-/
 function renderPatientsTable() {
   const tbody = $("#patientsTableBody");
   const list = filterPatients(state.patients, state.patientSearch);

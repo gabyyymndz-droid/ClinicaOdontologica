@@ -64,62 +64,6 @@
     </section>
   </div>
 
-  <script type="module">
-    import { login, redirectIfAuthenticated, getAuthErrorMessage, requestPasswordReset } from "./js/auth.js";
-
-    const form = document.getElementById("loginForm");
-    const alertBox = document.getElementById("loginAlert");
-    const btn = document.getElementById("loginBtn");
-
-    const showAlert = (message, type = "danger") => {
-      alertBox.className = `alert alert-${type}`;
-      alertBox.textContent = message;
-    };
-    const setLoading = (loading) => {
-      btn.disabled = loading;
-      btn.querySelector(".spinner-border").classList.toggle("d-none", !loading);
-      btn.querySelector(".btn-label").textContent = loading ? "Verificando…" : "Entrar";
-    };
-
-    // Guardia: si ya hay sesión válida, ir directo al panel
-    setLoading(true);
-    redirectIfAuthenticated("index.html").finally(() => setLoading(false));
-
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      form.classList.add("was-validated");
-      if (!form.checkValidity()) return;
-
-      setLoading(true);
-      alertBox.classList.add("d-none");
-      try {
-        await login(form.email.value, form.password.value, document.getElementById("remember").checked);
-        showAlert("Acceso concedido. Redirigiendo…", "success");
-        window.location.replace("index.html");
-      } catch (err) {
-        showAlert(getAuthErrorMessage(err));
-        setLoading(false);
-      }
-    });
-
-    document.getElementById("forgotPassword").addEventListener("click", async () => {
-      const email = form.email.value.trim();
-      if (!email) { showAlert("Escribe tu correo arriba y vuelve a pulsar «¿Olvidaste tu contraseña?».", "warning"); return; }
-      try {
-        await requestPasswordReset(email);
-        showAlert("Si el correo está registrado, recibirás un enlace para restablecer la contraseña.", "info");
-      } catch (err) {
-        showAlert(getAuthErrorMessage(err));
-      }
-    });
-
-    document.getElementById("togglePassword").addEventListener("click", (e) => {
-      const input = form.password;
-      const show = input.type === "password";
-      input.type = show ? "text" : "password";
-      e.currentTarget.innerHTML = `<i class="bi bi-eye${show ? "-slash" : ""}"></i>`;
-      e.currentTarget.setAttribute("aria-label", show ? "Ocultar contraseña" : "Mostrar contraseña");
-    });
-  </script>
+  <script type="module" src="./js/auth.js"></script>
 </body>
 </html>

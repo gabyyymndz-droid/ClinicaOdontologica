@@ -11,7 +11,7 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.rol;
     }
     function isDoctor() { return signedIn() && userRole() == 'doctor'; }
-    function isStaff()  { return signedIn() && userRole() in ['doctor', 'secretaria']; }
+    function isStaff()  { return signedIn() && userRole() in ['doctor', 'secretaria', 'secretary']; }
 
     function validPatient(d) {
       return d.nombre is string && d.nombre.size() >= 3

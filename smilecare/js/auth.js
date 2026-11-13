@@ -25,6 +25,10 @@ export const ROLE_LABELS = Object.freeze({
   [ROLES.SECRETARIA]: "Secretaria",
 });
 
+function normalizeRole(role) {
+  return role === "secretary" ? ROLES.SECRETARIA : role;
+}
+
 /** La lectura de pacientes, historial y citas está permitida a ambos roles. */
 const PERMISSIONS = Object.freeze({
   [ROLES.DOCTOR]: [
@@ -54,18 +58,14 @@ let currentUser = null; // { uid, email, nombre, rol }
 /* Perfil                                                              */
 /* ------------------------------------------------------------------ */
 async function loadProfile(firebaseUser) {
-  let snap;
-  try {
-    snap = await getDoc(doc(db, "users", firebaseUser.uid));
-  } catch (err) {
-    console.error("No se pudo leer el perfil:", err);
-    snap = null;
-  }
-
-  const data = snap?.exists() ? snap.data() : null;
-  if (!data || !PERMISSIONS[data.rol]) {
+  const snap = await getDoc(doc(db, "users", firebaseUser.uid));
+  const data = snap.exists() ? snap.data() : null;
+  const rol = normalizeRole(data?.rol);
+  if (!data || !PERMISSIONS[rol]) {
     await signOut(auth);
     currentUser = null;
+    sessionStorage.removeItem("userRole");
+    localStorage.removeItem("userRole");
     throw new Error("Tu cuenta no tiene un rol asignado. Contacta al administrador de la clínica.");
   }
 
@@ -73,8 +73,9 @@ async function loadProfile(firebaseUser) {
     uid: firebaseUser.uid,
     email: firebaseUser.email,
     nombre: data.nombre || firebaseUser.email,
-    rol: data.rol,
+    rol,
   };
+  sessionStorage.setItem("userRole", currentUser.rol);
   return currentUser;
 }
 
@@ -87,9 +88,11 @@ export async function login(email, password, remember = true) {
   return loadProfile(cred.user);
 }
 
-export async function logout(redirectTo = "login.html") {
+export async function logout(redirectTo = "./login.html") {
   await signOut(auth);
   currentUser = null;
+  sessionStorage.removeItem("userRole");
+  localStorage.removeItem("userRole");
   window.location.replace(redirectTo);
 }
 
@@ -132,7 +135,7 @@ export function waitForAuth() {
 }
 
 /** Guardia para páginas protegidas: redirige al login si no hay sesión válida. */
-export async function protectPage(loginUrl = "login.html") {
+export async function protectPage(loginUrl = "./login.html") {
   const user = await waitForAuth();
   if (!user) {
     window.location.replace(loginUrl);
@@ -142,7 +145,7 @@ export async function protectPage(loginUrl = "login.html") {
 }
 
 /** Guardia para el login: si ya hay sesión, envía al panel. */
-export async function redirectIfAuthenticated(homeUrl = "index.html") {
+export async function redirectIfAuthenticated(homeUrl = "./index.html") {
   const user = await waitForAuth();
   if (user) window.location.replace(homeUrl);
   return user;
@@ -171,3 +174,66 @@ export function getAuthErrorMessage(error) {
   };
   return messages[error?.code] || error?.message || "No se pudo iniciar sesión.";
 }
+
+function setupLoginForm() {
+  const form = document.getElementById("loginForm");
+  if (!form) return;
+
+  const emailInput = document.getElementById("email");
+  const passwordInput = document.getElementById("password");
+  const alertBox = document.getElementById("loginAlert");
+  const button = document.getElementById("loginBtn");
+
+  const showAlert = (message, type = "danger") => {
+    alertBox.className = `alert alert-${type}`;
+    alertBox.textContent = message;
+  };
+  const setLoading = (loading) => {
+    button.disabled = loading;
+    button.querySelector(".spinner-border").classList.toggle("d-none", !loading);
+    button.querySelector(".btn-label").textContent = loading ? "Verificando…" : "Entrar";
+  };
+
+  setLoading(true);
+  redirectIfAuthenticated("./index.html").finally(() => setLoading(false));
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    form.classList.add("was-validated");
+    if (!form.checkValidity()) return;
+
+    setLoading(true);
+    alertBox.classList.add("d-none");
+    try {
+      await login(emailInput.value, passwordInput.value, document.getElementById("remember").checked);
+      showAlert("Acceso concedido. Redirigiendo…", "success");
+      window.location.replace("./index.html");
+    } catch (err) {
+      showAlert(getAuthErrorMessage(err));
+      setLoading(false);
+    }
+  });
+
+  document.getElementById("forgotPassword").addEventListener("click", async () => {
+    const email = emailInput.value.trim();
+    if (!email) {
+      showAlert("Escribe tu correo arriba y vuelve a pulsar «¿Olvidaste tu contraseña?».", "warning");
+      return;
+    }
+    try {
+      await requestPasswordReset(email);
+      showAlert("Si el correo está registrado, recibirás un enlace para restablecer la contraseña.", "info");
+    } catch (err) {
+      showAlert(getAuthErrorMessage(err));
+    }
+  });
+
+  document.getElementById("togglePassword").addEventListener("click", (e) => {
+    const show = passwordInput.type === "password";
+    passwordInput.type = show ? "text" : "password";
+    e.currentTarget.innerHTML = `<i class="bi bi-eye${show ? "-slash" : ""}"></i>`;
+    e.currentTarget.setAttribute("aria-label", show ? "Ocultar contraseña" : "Mostrar contraseña");
+  });
+}
+
+setupLoginForm();
