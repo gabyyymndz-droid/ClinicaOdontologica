@@ -1,8 +1,4 @@
-/**
- * patients.js
- * CRUD de pacientes (ficha clínica) y de consultas (subcolección patients/{id}/consultations).
- * Incluye la búsqueda en memoria por nombre / DUI con .filter() e .includes().
- */
+
 import { db, CLINIC_CONFIG } from "./firebase-config.js";
 import {
   collection, doc, getDoc, getDocs, addDoc, deleteDoc,
