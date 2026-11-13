@@ -1,23 +1,26 @@
-/**
- * appointments.js
- * Gestión de citas, utilidades de fecha y recordatorio por WhatsApp
- * (https://api.whatsapp.com/send?phone=...&text=...).
+
  */
 import { db, CLINIC_CONFIG } from "./firebase-config.js";
 import {
   collection, doc, getDocs, addDoc, updateDoc, deleteDoc,
-  query, where, orderBy, serverTimestamp,
+  query, where, orderBy, serverTimestamp, Timestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { assertPermission, getCurrentUser } from "./auth.js";
-import { normalizeText } from "./patients.js";
+import { normalizeText, normalizePhone } from "./patients.js";
+
+export { normalizePhone };
 
 const appointmentsRef = collection(db, "appointments");
 
 export const ESTADOS = Object.freeze({
   PROGRAMADA: "programada",
+  CONFIRMADA: "confirmada",
   COMPLETADA: "completada",
   CANCELADA: "cancelada",
 });
+
+/** Una cita "activa" es la que aún va a ocurrir: programada o confirmada por el paciente. */
+export const isActive = (appt) => appt.estado === ESTADOS.PROGRAMADA || appt.estado === ESTADOS.CONFIRMADA;
 
 export const COMMON_REASONS = Object.freeze([
   "Evaluación general", "Limpieza dental", "Control de ortodoncia", "Dolor dental",
@@ -27,9 +30,7 @@ export const COMMON_REASONS = Object.freeze([
 const HORARIO = { apertura: "07:00", cierre: "19:00" };
 const MIN_GAP_MINUTES = 30; // separación mínima entre citas
 
-/* ------------------------------------------------------------------ */
-/* Fechas                                                              */
-/* ------------------------------------------------------------------ */
+
 export function todayISO(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
@@ -80,10 +81,6 @@ export function toDateTime(appt) {
   return d;
 }
 
-function localISODate(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
 /** Cálculo del tiempo restante para la cita y si conviene enviar recordatorio (≤ 48 h). */
 export function getReminderInfo(appt, now = new Date()) {
   const when = toDateTime(appt);
@@ -104,9 +101,7 @@ export function getReminderInfo(appt, now = new Date()) {
   };
 }
 
-/* ------------------------------------------------------------------ */
-/* Orden y filtros (en memoria)                                        */
-/* ------------------------------------------------------------------ */
+
 export function sortAppointments(list) {
   return list.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.hora.localeCompare(b.hora));
 }
@@ -115,9 +110,9 @@ export function filterAppointments(list, filter = "proximas", term = "") {
   const today = todayISO();
   const filters = {
     hoy: (a) => a.fecha === today && a.estado !== ESTADOS.CANCELADA,
-    proximas: (a) => a.estado === ESTADOS.PROGRAMADA && a.fecha >= today,
+    proximas: (a) => isActive(a) && a.fecha >= today,
     todas: () => true,
-    historial: (a) => a.estado !== ESTADOS.PROGRAMADA || a.fecha < today,
+    historial: (a) => !isActive(a) || a.fecha < today,
   };
 
   const text = normalizeText(term);
@@ -129,46 +124,56 @@ export function filterAppointments(list, filter = "proximas", term = "") {
   return filter === "historial" ? [...result].reverse() : result;
 }
 
-/* ------------------------------------------------------------------ */
-/* CRUD                                                                */
-/* ------------------------------------------------------------------ */
-const toDate = (v) => (v?.toDate ? v.toDate() : v instanceof Date ? v : null);
 
+const toDate = (v) => (v?.toDate ? v.toDate() : v instanceof Date ? v : null);
+const pad2 = (n) => String(n).padStart(2, "0");
+
+/**
+ * Documento de Firestore → objeto de la app.
+ * Acepta el formato nuevo (fecha Timestamp + nombre) y el anterior (fecha "YYYY-MM-DD" + hora + pacienteNombre).
+ */
 function mapAppointment(snap) {
   const d = snap.data();
-  const fecha = toDate(d.fecha);
-  return {
+  const legacy = typeof d.fecha === "string";
+  const fechaHora = legacy ? null : toDate(d.fecha);
+
+  const appt = {
     id: snap.id,
     ...d,
-    fecha: fecha ? localISODate(fecha) : d.fecha,
+    pacienteNombre: d.nombre ?? d.pacienteNombre ?? "",
+    fecha: legacy ? d.fecha : fechaHora ? todayISO(fechaHora) : "",
+    hora: legacy ? d.hora : fechaHora ? `${pad2(fechaHora.getHours())}:${pad2(fechaHora.getMinutes())}` : "00:00",
     creadoEn: toDate(d.creadoEn),
     recordatorioFecha: toDate(d.recordatorioFecha),
   };
+  appt.fechaHora = fechaHora ?? (appt.fecha ? toDateTime(appt) : null);
+  return appt;
 }
 
 export async function getAppointments() {
   const snap = await getDocs(query(appointmentsRef, orderBy("fecha", "asc")));
-  return sortAppointments(snap.docs.map(mapAppointment));
+  return sortAppointments(snap.docs.map(mapAppointment).filter((a) => a.fecha));
 }
 
-async function assertSlotAvailable(fecha, hora) {
-  const start = parseISODate(fecha);
+/** Busca choques de horario entre las citas de ese día (rango de Timestamps, índice automático). */
+async function assertSlotAvailable(fechaHora) {
+  const start = new Date(fechaHora.getFullYear(), fechaHora.getMonth(), fechaHora.getDate());
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
-  const [timestampSnap, legacySnap] = await Promise.all([
-    getDocs(query(appointmentsRef, where("fecha", ">=", start), where("fecha", "<", end))),
-    getDocs(query(appointmentsRef, where("fecha", "==", fecha))),
-  ]);
-  const documents = new Map(
-    [...timestampSnap.docs, ...legacySnap.docs].map((snapshot) => [snapshot.id, snapshot]),
-  );
-  const target = toMinutes(hora);
-  const conflict = [...documents.values()]
-    .map((d) => d.data())
-    .find((a) => a.estado !== ESTADOS.CANCELADA && Math.abs(toMinutes(a.hora) - target) < MIN_GAP_MINUTES);
+
+  const snap = await getDocs(query(
+    appointmentsRef,
+    where("fecha", ">=", Timestamp.fromDate(start)),
+    where("fecha", "<", Timestamp.fromDate(end)),
+  ));
+
+  const conflict = snap.docs
+    .map(mapAppointment)
+    .find((a) => a.estado !== ESTADOS.CANCELADA &&
+      Math.abs(a.fechaHora - fechaHora) < MIN_GAP_MINUTES * 60_000);
 
   if (conflict) {
-    throw new Error(`Ese horario choca con la cita de ${conflict.pacienteNombre} a las ${formatTime12(conflict.hora)}.`);
+    throw new Error(`Ese horario choca con la cita de ${conflict.pacienteNombre} a las ${formatTime12(conflict.hora)}`);
   }
 }
 
@@ -176,39 +181,52 @@ export async function createAppointment(raw, patient) {
   assertPermission("appointments:create");
   if (!patient) throw new Error("Selecciona un paciente válido.");
 
-  const data = {
+  const local = {
     fecha: raw.fecha,
     hora: raw.hora,
     motivo: String(raw.motivo ?? "").trim() || "Consulta general",
     notas: String(raw.notas ?? "").trim(),
   };
 
-  if (!data.fecha || !data.hora) throw new Error("La fecha y la hora son obligatorias.");
-  if (data.hora < HORARIO.apertura || data.hora > HORARIO.cierre) {
+  if (!local.fecha || !local.hora) throw new Error("La fecha y la hora son obligatorias.");
+  if (local.hora < HORARIO.apertura || local.hora > HORARIO.cierre) {
     throw new Error(`El horario de atención es de ${formatTime12(HORARIO.apertura)} a ${formatTime12(HORARIO.cierre)}.`);
   }
-  if (toDateTime(data) < new Date()) throw new Error("No se puede agendar una cita en el pasado.");
 
-  await assertSlotAvailable(data.fecha, data.hora);
+  const fechaHora = toDateTime(local);
+  if (fechaHora < new Date()) throw new Error("No se puede agendar una cita en el pasado.");
+
+  const telefono = normalizePhone(patient.telefono);
+  if (!/^\d{10,15}$/.test(telefono)) {
+    throw new Error(`El teléfono de ${patient.nombre} no es válido. Debe tener 8 dígitos (o incluir el código de país).`);
+  }
+
+  await assertSlotAvailable(fechaHora);
 
   const user = getCurrentUser();
   const payload = {
-    ...data,
-    pacienteId: patient.id,
     nombre: patient.nombre,
-    pacienteNombre: patient.nombre,
-    telefono: normalizePhone(patient.telefono),
+    telefono,                              // "50370000000"
+    fecha: Timestamp.fromDate(fechaHora),  // Timestamp nativo (fecha + hora)
+    hora: local.hora,                      // solo informativo / legible en la consola
+    motivo: local.motivo,
+    notas: local.notas,
+    pacienteId: patient.id,
     estado: ESTADOS.PROGRAMADA,
     recordatorioEnviado: false,
     creadoPor: user.uid,
   };
-  const ref = await addDoc(appointmentsRef, {
+  const ref = await addDoc(appointmentsRef, { ...payload, creadoEn: serverTimestamp(), actualizadoEn: serverTimestamp() });
+
+  return {
     ...payload,
-    fecha: toDateTime(data),
-    creadoEn: serverTimestamp(),
-    actualizadoEn: serverTimestamp(),
-  });
-  return { id: ref.id, ...payload, creadoEn: new Date(), recordatorioFecha: null };
+    id: ref.id,
+    pacienteNombre: patient.nombre,
+    fecha: local.fecha,
+    fechaHora,
+    creadoEn: new Date(),
+    recordatorioFecha: null,
+  };
 }
 
 export async function updateAppointmentStatus(id, estado) {
@@ -220,15 +238,6 @@ export async function updateAppointmentStatus(id, estado) {
 export async function deleteAppointment(id) {
   assertPermission("appointments:delete");
   await deleteDoc(doc(db, "appointments", id));
-}
-
-/* ------------------------------------------------------------------ */
-/* WhatsApp                                                            */
-/* ------------------------------------------------------------------ */
-/** Deja solo dígitos y antepone el código de país si es un número local de 8 dígitos. */
-export function normalizePhone(phone, countryCode = CLINIC_CONFIG.codigoPais) {
-  const digits = String(phone ?? "").replace(/\D/g, "");
-  return digits.length === 8 ? `${countryCode}${digits}` : digits;
 }
 
 export function buildReminderMessage(appt) {
@@ -265,7 +274,7 @@ export function buildWhatsAppUrl(appt) {
  */
 export async function sendWhatsAppReminder(appt) {
   assertPermission("reminders:send");
-  if (appt.estado !== ESTADOS.PROGRAMADA) throw new Error("Solo se envían recordatorios de citas programadas.");
+  if (!isActive(appt)) throw new Error("Solo se envían recordatorios de citas programadas o confirmadas.");
 
   const url = buildWhatsAppUrl(appt);
   const win = window.open(url, "_blank");
