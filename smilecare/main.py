@@ -87,4 +87,85 @@ def procesar_recordatorios():
         cita = doc.to_dict()
         if not cita.get("recordatorio_enviado"):
             fecha_cita = cita["fecha"].strftime("%d/%m/%Y a las %H:%M")
-            tel_limpio = limpiar
+            tel_limpio = limpiar_telefono(cita.get("telefono", ""))
+            if tel_limpio:
+                enviar_whatsapp(tel_limpio, cita["nombre"], fecha_cita)
+                doc.reference.update({
+                    "recordatorio_enviado": True,
+                    "estado": "pendiente_confirmacion"
+                })
+
+# 4. Configurar el reloj interno e instancia de FastAPI
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(procesar_recordatorios, "interval", hours=1)
+    scheduler.start()
+    yield
+    scheduler.shutdown()
+
+app = FastAPI(lifespan=lifespan)
+
+# 5. Rutas del servidor y Webhook
+@app.get("/")
+def health_check():
+    return {"estado": "SmileCare Backend activo"}
+
+@app.get("/webhook")
+def verificar_webhook(
+    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_verify_token: str = Query(None, alias="hub.verify_token"),
+    hub_challenge: str = Query(None, alias="hub.challenge")
+):
+    if hub_mode == "subscribe" and hub_verify_token == WEBHOOK_VERIFY_TOKEN:
+        return PlainTextResponse(content=hub_challenge, status_code=200)
+    raise HTTPException(status_code=403, detail="Token de verificación inválido")
+
+@app.post("/webhook")
+async def recibir_mensaje_whatsapp(request: Request):
+    body = await request.json()
+
+    try:
+        entries = body.get("entry", [])
+        for entry in entries:
+            for change in entry.get("changes", []):
+                value = change.get("value", {})
+                messages = value.get("messages", [])
+
+                for msg in messages:
+                    telefono_remitente = limpiar_telefono(msg.get("from", ""))
+                    tipo = msg.get("type")
+
+                    texto_respuesta = ""
+                    if tipo == "text":
+                        texto_respuesta = msg["text"]["body"].strip().lower()
+                    elif tipo == "button":
+                        texto_respuesta = msg["button"]["text"].strip().lower()
+
+                    palabras_confirmacion = ["si", "sí", "confirmo", "confirmar", "ok", "dale", "listo"]
+                    if any(palabra in texto_respuesta for palabra in palabras_confirmacion) and db:
+                        confirmar_cita_en_firebase(telefono_remitente)
+
+    except Exception as e:
+        print(f"Error procesando webhook: {e}")
+
+    return {"status": "ok"}
+
+def confirmar_cita_en_firebase(telefono_paciente: str):
+    citas = db.collection("appointments").where("recordatorio_enviado", "==", True).stream()
+
+    for doc in citas:
+        datos = doc.to_dict()
+        tel_bd = limpiar_telefono(datos.get("telefono", ""))
+        
+        if tel_bd == telefono_paciente and datos.get("estado") != "confirmada":
+            doc.reference.update({
+                "estado": "confirmada",
+                "confirmada": True
+            })
+            enviar_respuesta_simple(
+                telefono_paciente,
+                f"¡Gracias {datos.get('nombre', '')}! Tu cita en SmileCare ha quedado confirmada."
+            )
+            print(f"Cita {doc.id} confirmada para {telefono_paciente}")
+            break
