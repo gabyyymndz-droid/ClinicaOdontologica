@@ -1,8 +1,4 @@
-/**
- * app.js
- * Controlador de la interfaz: router por hash con guardias de rol, eventos del DOM
- * (delegación), renderizado dinámico, toasts, spinners y modales.
- */
+
 import {
   protectPage, logout, can, canAccessView, watchSession, ROLE_LABELS,
 } from "./auth.js";
@@ -14,12 +10,9 @@ import {
 import {
   getAppointments, createAppointment, updateAppointmentStatus, deleteAppointment,
   sendWhatsAppReminder, getReminderInfo, filterAppointments, sortAppointments, normalizePhone,
-  formatDateLong, formatDateShort, formatTime12, todayISO, addDaysISO, ESTADOS, COMMON_REASONS,
+  formatDateLong, formatDateShort, formatTime12, todayISO, addDaysISO, ESTADOS, COMMON_REASONS, isActive,
 } from "./appointments.js";
 
-/* ================================================================== */
-/* Estado                                                              */
-/* ================================================================== */
 const state = {
   user: null,
   patients: [],
@@ -53,10 +46,6 @@ const PATIENT_FIELDS = [
   { name: "alergias", label: "Alergias", type: "textarea", col: "col-md-6", placeholder: "Ej. Penicilina, látex. Dejar vacío si no tiene." },
   { name: "antecedentes", label: "Antecedentes médicos", type: "textarea", col: "col-md-6", placeholder: "Diabetes, hipertensión, medicamentos actuales…" },
 ];
-
-/* ================================================================== */
-/* Utilidades de interfaz                                              */
-/* ================================================================== */
 function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>"']/g, (ch) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -154,7 +143,6 @@ function applyPermissions(root = document) {
   $$("[data-permission-hide]", root).forEach((el) => el.classList.toggle("d-none", can(el.dataset.permissionHide)));
 }
 
-/* --------------------------- Formularios --------------------------- */
 function renderPatientFields(container, prefix) {
   container.innerHTML = PATIENT_FIELDS.map((f) => {
     const id = `${prefix}-${f.name}`;
@@ -203,10 +191,10 @@ function resetForm(form) {
   form.classList.remove("was-validated");
 }
 
-/* --------------------------- Badges --------------------------- */
 function statusBadge(estado) {
   const map = {
     [ESTADOS.PROGRAMADA]: ["primary", "calendar-event", "Programada"],
+    [ESTADOS.CONFIRMADA]: ["info", "patch-check", "Confirmada"],
     [ESTADOS.COMPLETADA]: ["success", "check2-circle", "Completada"],
     [ESTADOS.CANCELADA]: ["secondary", "x-circle", "Cancelada"],
   };
@@ -218,22 +206,19 @@ function reminderBadge(appt) {
   if (appt.recordatorioEnviado) {
     return `<span class="badge bg-success-subtle text-success-emphasis"><i class="bi bi-whatsapp me-1"></i>Enviado</span>`;
   }
-  if (appt.estado !== ESTADOS.PROGRAMADA) return `<span class="text-secondary small">—</span>`;
+  if (!isActive(appt)) return `<span class="text-secondary small">—</span>`;
   const info = getReminderInfo(appt);
   if (info.isDueSoon) return `<span class="badge bg-warning-subtle text-warning-emphasis"><i class="bi bi-bell me-1"></i>Pendiente</span>`;
   return `<span class="text-secondary small">${info.isUpcoming ? "Aún no" : "—"}</span>`;
 }
 
 function whatsappButton(appt, size = "sm") {
-  if (appt.estado !== ESTADOS.PROGRAMADA || !can("reminders:send") || !getReminderInfo(appt).isUpcoming) return "";
+  if (!isActive(appt) || !can("reminders:send") || !getReminderInfo(appt).isUpcoming) return "";
   const label = appt.recordatorioEnviado ? "Reenviar recordatorio" : "Enviar recordatorio WhatsApp";
   return `<button class="btn btn-${size} btn-whatsapp" data-action="send-reminder" data-id="${appt.id}" title="${label}" aria-label="${label}">
     <i class="bi bi-whatsapp"></i><span class="d-none d-xl-inline ms-1">${appt.recordatorioEnviado ? "Reenviar" : "Recordar"}</span></button>`;
 }
 
-/* ================================================================== */
-/* Router (hash) con guardia de rol                                    */
-/* ================================================================== */
 function parseHash() {
   const [, view, param] = location.hash.split("/");
   return { view: view || "dashboard", param: param ? decodeURIComponent(param) : null };
@@ -271,7 +256,7 @@ async function router() {
   }
 }
 
-/** Vuelve a pintar la vista activa con el estado en memoria (sin volver a consultar Firestore). */
+
 function rerenderView() {
   const { view } = parseHash();
   if (view === "dashboard") renderDashboard();
@@ -280,9 +265,7 @@ function rerenderView() {
   else if (view === "expediente" && state.currentPatient) renderRecord({ keepForms: true });
 }
 
-/* ================================================================== */
-/* Carga de datos                                                      */
-/* ================================================================== */
+
 async function loadPatients() {
   try {
     state.patients = await getPatients();
@@ -311,9 +294,7 @@ async function refreshAppointments(btn) {
   renderAppointments();
 }
 
-/* ================================================================== */
-/* Dashboard                                                           */
-/* ================================================================== */
+
 function renderDashboard() {
   const hour = new Date().getHours();
   const salute = hour < 12 ? "Buenos días" : hour < 18 ? "Buenas tardes" : "Buenas noches";
@@ -321,7 +302,7 @@ function renderDashboard() {
 
   const today = todayISO();
   const inAWeek = addDaysISO(7);
-  const scheduled = state.appointments.filter((a) => a.estado === ESTADOS.PROGRAMADA);
+  const scheduled = state.appointments.filter(isActive);
   const todayList = state.appointments.filter((a) => a.fecha === today && a.estado !== ESTADOS.CANCELADA);
   const weekCount = scheduled.filter((a) => a.fecha >= today && a.fecha <= inAWeek).length;
   const pendingReminders = scheduled.filter((a) => !a.recordatorioEnviado && getReminderInfo(a).isDueSoon).length;
@@ -379,9 +360,7 @@ function renderDashboard() {
   applyPermissions($("[data-view=dashboard]"));
 }
 
-/* ================================================================== */
-/* Pacientes                                                           */
-/* ================================================================== */
+/
 function renderPatientsTable() {
   const tbody = $("#patientsTableBody");
   const list = filterPatients(state.patients, state.patientSearch);
@@ -481,9 +460,7 @@ async function handleDeletePatient(id, btn) {
   }, "");
 }
 
-/* ================================================================== */
-/* Expediente                                                          */
-/* ================================================================== */
+
 let recordRequestId = 0;
 
 async function openPatientRecord(id) {
@@ -575,7 +552,7 @@ async function handleFichaSubmit(e) {
       if (idx >= 0) state.patients[idx] = patient;
       state.appointments
         .filter((a) => a.pacienteId === patient.id)
-        .forEach((a) => { a.pacienteNombre = patient.nombre; a.telefono = patient.telefono; });
+        .forEach((a) => { a.pacienteNombre = patient.nombre; a.nombre = patient.nombre; a.telefono = normalizePhone(patient.telefono); });
       state.patients.sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
 
       form.classList.remove("was-validated");
@@ -589,7 +566,6 @@ async function handleFichaSubmit(e) {
   });
 }
 
-/* --------------------------- Odontograma --------------------------- */
 function renderOdontogram() {
   const counts = state.consultations.reduce((acc, c) => {
     acc[c.piezaDental] = (acc[c.piezaDental] || 0) + 1;
@@ -627,7 +603,6 @@ function selectTooth(n) {
   $("#cTratamiento").focus();
 }
 
-/* --------------------------- Historial --------------------------- */
 function renderTimeline(highlightId = null) {
   const list = state.consultations;
   const total = list.reduce((sum, c) => sum + (Number(c.costo) || 0), 0);
@@ -731,7 +706,7 @@ async function handleDeleteConsultation(id, btn) {
   }, "");
 }
 
-/* --------------------------- Citas del paciente --------------------------- */
+
 function renderPatientAppointments() {
   const list = state.appointments
     .filter((a) => a.pacienteId === state.currentPatient.id)
@@ -750,9 +725,7 @@ function renderPatientAppointments() {
     : emptyHTML("calendar2", "Sin citas", "Este paciente no tiene citas registradas.");
 }
 
-/* ================================================================== */
-/* Citas                                                               */
-/* ================================================================== */
+
 function renderAppointments() {
   $$("#apptFilters [data-filter]").forEach((b) => {
     const active = b.dataset.filter === state.apptFilter;
@@ -770,8 +743,8 @@ function renderAppointments() {
 
   tbody.innerHTML = list.map((a) => {
     const info = getReminderInfo(a);
-    const overdue = a.estado === ESTADOS.PROGRAMADA && !info.isUpcoming;
-    const isScheduled = a.estado === ESTADOS.PROGRAMADA;
+    const overdue = isActive(a) && !info.isUpcoming;
+    const isScheduled = isActive(a);
     return `
       <tr class="${overdue ? "row-overdue" : ""}">
         <td>
@@ -902,9 +875,6 @@ async function handleSendReminder(id) {
   }
 }
 
-/* ================================================================== */
-/* Eventos                                                             */
-/* ================================================================== */
 function onDocumentClick(e) {
   const actionEl = e.target.closest("[data-action]");
   if (!actionEl) {
@@ -977,9 +947,6 @@ function bindEvents() {
   window.addEventListener("hashchange", router);
 }
 
-/* ================================================================== */
-/* Arranque                                                            */
-/* ================================================================== */
 function setupStaticUI() {
   const u = state.user;
   $("#userName").textContent = u.nombre;
