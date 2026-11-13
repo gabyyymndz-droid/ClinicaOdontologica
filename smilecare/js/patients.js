@@ -3,7 +3,7 @@
  * CRUD de pacientes (ficha clínica) y de consultas (subcolección patients/{id}/consultations).
  * Incluye la búsqueda en memoria por nombre / DUI con .filter() e .includes().
  */
-import { db } from "./firebase-config.js";
+import { db, CLINIC_CONFIG } from "./firebase-config.js";
 import {
   collection, doc, getDoc, getDocs, addDoc, deleteDoc,
   query, where, orderBy, limit, serverTimestamp, writeBatch,
@@ -14,9 +14,7 @@ const patientsRef = collection(db, "patients");
 const appointmentsRef = collection(db, "appointments");
 const consultationsRef = (patientId) => collection(db, "patients", patientId, "consultations");
 
-/* ------------------------------------------------------------------ */
-/* Catálogos                                                           */
-/* ------------------------------------------------------------------ */
+
 export const GENERAL_TOOTH = "General";
 
 /** Numeración FDI, ordenada como la ve el odontólogo frente al paciente. */
@@ -43,9 +41,6 @@ export const COMMON_TREATMENTS = Object.freeze([
 
 export const DUI_REGEX = /^\d{8}-\d$/;
 
-/* ------------------------------------------------------------------ */
-/* Utilidades puras                                                    */
-/* ------------------------------------------------------------------ */
 export function normalizeText(value = "") {
   return String(value).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 }
@@ -54,6 +49,15 @@ export function normalizeText(value = "") {
 export function formatDUI(value = "") {
   const digits = String(value).replace(/\D/g, "").slice(0, 9);
   return digits.length > 8 ? `${digits.slice(0, 8)}-${digits.slice(8)}` : digits;
+}
+
+/**
+ * Teléfono en formato internacional solo con dígitos: "7000-0000" → "50370000000".
+ * Es el formato que usan WhatsApp y el servidor de recordatorios.
+ */
+export function normalizePhone(phone, countryCode = CLINIC_CONFIG.codigoPais) {
+  const digits = String(phone ?? "").replace(/\D/g, "");
+  return digits.length === 8 ? `${countryCode}${digits}` : digits;
 }
 
 export function calcAge(fechaNacimiento) {
@@ -130,9 +134,6 @@ async function assertUniqueDUI(dui, excludeId = null) {
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* Pacientes                                                           */
-/* ------------------------------------------------------------------ */
 export async function getPatients() {
   const snap = await getDocs(query(patientsRef, orderBy("nombre")));
   return snap.docs.map(mapPatient);
@@ -169,7 +170,7 @@ export async function updatePatient(id, raw) {
   batch.update(doc(db, "patients", id), { ...data, actualizadoEn: serverTimestamp() });
 
   const appts = await getDocs(query(appointmentsRef, where("pacienteId", "==", id)));
-  appts.forEach((a) => batch.update(a.ref, { pacienteNombre: data.nombre, telefono: data.telefono }));
+  appts.forEach((a) => batch.update(a.ref, { nombre: data.nombre, telefono: normalizePhone(data.telefono) }));
 
   await batch.commit();
   return { ...data, actualizadoEn: new Date() };
@@ -190,9 +191,7 @@ export async function deletePatient(id) {
   await batch.commit();
 }
 
-/* ------------------------------------------------------------------ */
-/* Consultas (historial clínico)                                       */
-/* ------------------------------------------------------------------ */
+
 export async function getConsultations(patientId) {
   const snap = await getDocs(query(consultationsRef(patientId), orderBy("fecha", "desc")));
   return sortConsultations(snap.docs.map(mapConsultation));
