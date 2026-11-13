@@ -1,5 +1,4 @@
 
- */
 import { db, CLINIC_CONFIG } from "./firebase-config.js";
 import {
   collection, doc, getDocs, addDoc, updateDoc, deleteDoc,
