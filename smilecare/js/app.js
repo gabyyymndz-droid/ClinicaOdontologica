@@ -610,7 +610,6 @@ function renderTimeline(highlightId = null) {
   $("#consultCount").textContent = list.length;
   $("#consultSummary").innerHTML = [
     { label: "Consultas", value: list.length, icon: "clipboard2-pulse" },
-    { label: "Total facturado", value: money.format(total), icon: "cash-coin" },
     { label: "Última visita", value: last ? formatDateShort(last) : "—", icon: "clock-history" },
   ].map((s) => `
     <div class="col-4">
