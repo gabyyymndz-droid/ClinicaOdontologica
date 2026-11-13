@@ -325,7 +325,7 @@
     </div>
   </div>
 
-  <!-- ====================== MODAL: NUEVA CITA ====================== -->
+<!-- ====================== MODAL: NUEVA CITA ====================== -->
   <div class="modal fade" id="appointmentModal" tabindex="-1" aria-labelledby="appointmentModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-scrollable modal-fullscreen-sm-down">
       <div class="modal-content">
@@ -337,9 +337,13 @@
           <form id="appointmentForm" novalidate>
             <div class="row g-3">
               <div class="col-12">
-                <label class="form-label" for="apptPatient">Paciente <span class="text-danger">*</span></label>
-                <select class="form-select" id="apptPatient" name="pacienteId" required></select>
-                <div class="invalid-feedback">Selecciona un paciente.</div>
+                <label class="form-label" for="apptPatientInput">Paciente <span class="text-danger">*</span></label>
+                <!-- Input de texto con datalist integrado para buscar pacientes -->
+                <input type="text" class="form-control" id="apptPatientInput" placeholder="Escribe para buscar por nombre o DUI..." list="apptPatientList" autocomplete="off" required>
+                <datalist id="apptPatientList"></datalist>
+                <!-- Campo oculto para guardar el ID real de Firestore del paciente seleccionado -->
+                <input type="hidden" id="apptPatientId" name="pacienteId" required>
+                <div class="invalid-feedback">Selecciona un paciente válido de la lista.</div>
               </div>
               <div class="col-sm-6">
                 <label class="form-label" for="apptFecha">Fecha <span class="text-danger">*</span></label>
