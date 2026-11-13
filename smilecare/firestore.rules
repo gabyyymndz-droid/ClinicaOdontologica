@@ -45,10 +45,17 @@ service cloud.firestore {
 
     match /appointments/{appointmentId} {
       allow read: if isStaff();
+      // Formato que lee el servidor de recordatorios (Render):
+      // nombre (texto), telefono ("503XXXXXXXX") y fecha (Timestamp).
       allow create: if isStaff()
         && request.resource.data.estado == 'programada'
-        && request.resource.data.pacienteId is string;
+        && request.resource.data.pacienteId is string
+        && request.resource.data.nombre is string
+        && request.resource.data.telefono is string
+        && request.resource.data.telefono.matches('^[0-9]{10,15}$')
+        && request.resource.data.fecha is timestamp;
       // La Secretaria solo puede cambiar el estado y marcar el recordatorio.
+      // (El servidor usa el Admin SDK, que no pasa por estas reglas, para poner "confirmada".)
       allow update: if isDoctor() || (isStaff()
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['estado', 'recordatorioEnviado', 'recordatorioFecha', 'actualizadoEn']));
